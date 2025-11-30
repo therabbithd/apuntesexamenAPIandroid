@@ -1,6 +1,6 @@
 # Estructura y Análisis del Proyecto Pokémon Compose
 
-Este documento describe la estructura de archivos y directorios del proyecto, explicando el propósito de cada componente principal con ejemplos de código.
+Este documento describe la estructura de archivos y directorios del proyecto, explicando el propósito de cada componente principal con los códigos completos.
 
 ## 1. Esquema General de la Estructura
 
@@ -210,12 +210,14 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 class PokemonLocalDataSource @Inject constructor(
-    private val scope: CoroutineScope,
-    private val pokemonDao: PokemonDao
+    private val scope: CoroutineScope, 
+    private val pokemonDao: PokemonDao 
 ): PokemonDataSource {
+
     override suspend fun addAll(pokemonList: List<Pokemon>) {
         pokemonList.forEach { pokemon ->
             val entity = pokemon.toEntity()
+
             withContext(Dispatchers.IO) {
                 pokemonDao.insert(entity)
             }
@@ -224,11 +226,30 @@ class PokemonLocalDataSource @Inject constructor(
 
     override fun observe(): Flow<Result<List<Pokemon>>> {
         val databaseFlow = pokemonDao.observeAll()
+
         return databaseFlow.map { entities ->
             Result.success(entities.toModel())
         }
     }
-    // ...
+
+    override suspend fun readAll(): Result<List<Pokemon>> {
+        val result = Result.success(pokemonDao.getAll().toModel())
+        return result
+    }
+
+    override suspend fun readOne(id: Long): Result<Pokemon> {
+        val entity = pokemonDao.readPokemonById(id)
+
+        return if(entity == null){
+            Result.failure(PokemonNotFoundException())
+        }
+        else
+            Result.success(entity.toModel())
+    }
+
+    override suspend fun isError() {
+        TODO("Not yet implemented")
+    }
 }
 ```
 
@@ -251,6 +272,7 @@ Interfaz de Retrofit que define los _endpoints_ de la API. Las anotaciones `@GET
 ```kotlin
 package com.turingalan.pokemon.data.remote
 
+import androidx.compose.ui.geometry.Offset
 import com.turingalan.pokemon.data.remote.model.PokemonListRemote
 import com.turingalan.pokemon.data.remote.model.PokemonRemote
 import retrofit2.Response
@@ -264,7 +286,7 @@ interface PokemonApi {
 
     @GET("/api/v2/pokemon/{id}")
     suspend fun readOne(@Path("id") id: Long): Response<PokemonRemote>
-    
+
     @GET("/api/v2/pokemon/{name}")
     suspend fun readOne(@Path("name") name: String): Response<PokemonRemote>
 }
@@ -279,22 +301,46 @@ package com.turingalan.pokemon.data.remote
 import com.turingalan.pokemon.data.PokemonDataSource
 import com.turingalan.pokemon.data.model.Pokemon
 import com.turingalan.pokemon.data.remote.model.PokemonRemote
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.shareIn
 import javax.inject.Inject
 
 class PokemonRemoteDataSource @Inject constructor(
-    private val api: PokemonApi
+    private val api: PokemonApi,
+    private val scope: CoroutineScope
 ): PokemonDataSource {
-    
+
+    override suspend fun addAll(pokemonList: List<Pokemon>) {
+        TODO("Not yet implemented")
+    }
+
+    override fun observe(): Flow<Result<List<Pokemon>>> {
+        return flow {
+            emit(Result.success(listOf<Pokemon>()))
+            val result = readAll()
+            emit(result)
+        }.shareIn(
+            scope = scope,
+            started = SharingStarted.WhileSubscribed(5_000L), 
+            replay = 1 
+        )
+    }
+
     override suspend fun readAll(): Result<List<Pokemon>> {
         try {
             val response = api.readAll(limit = 20, offset = 0)
             val finalList = mutableListOf<Pokemon>()
 
             return if (response.isSuccessful) {
-                val body = response.body()!!
+                val body = response.body()!! 
                 for (result in body.results) {
                     val remotePokemon = readOne(name = result.name)
-                    remotePokemon?.let { finalList.add(it) }
+                    remotePokemon?.let {
+                        finalList.add(it)
+                    }
                 }
                 Result.success(finalList)
             } else {
@@ -304,7 +350,33 @@ class PokemonRemoteDataSource @Inject constructor(
             return Result.failure(e)
         }
     }
-    // ...
+
+    private suspend fun readOne(name: String): Pokemon? {
+        val response = api.readOne(name)
+        return if (response.isSuccessful) {
+            response.body()!!.toExternal() 
+        } else {
+            null
+        }
+    }
+
+    override suspend fun readOne(id: Long): Result<Pokemon> {
+        try {
+            val response = api.readOne(id)
+            return if (response.isSuccessful) {
+                val pokemon = response.body()!!.toExternal()
+                Result.success(pokemon)
+            } else {
+                Result.failure(RuntimeException("Error code: ${response.code()}"))
+            }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+    }
+
+    override suspend fun isError() {
+        TODO("Not yet implemented")
+    }
 }
 
 fun PokemonRemote.toExternal(): Pokemon {
@@ -324,15 +396,21 @@ fun PokemonRemote.toExternal(): Pokemon {
 package com.turingalan.pokemon.data.remote.model
 
 import com.google.gson.annotations.SerializedName
+import com.turingalan.pokemon.data.model.Pokemon
 
 data class PokemonListRemote(
     val results: List<PokemonListItemRemote>
 )
 
+data class PokemonListItemRemote(
+    val name: String,
+    val url: String,
+)
+
 data class PokemonRemote(
     val id: Long,
     val name: String,
-    val sprites: PokemonSprites,
+    val sprites: PokemonSprites, 
 )
 
 data class PokemonSprites(
@@ -344,7 +422,10 @@ data class PokemonOtherSprites(
     @SerializedName("official-artwork")
     val officialArtwork: PokemonOfficialArtwork,
 )
-// ...
+
+data class PokemonOfficialArtwork(
+    val front_default: String
+)
 ```
 
 #### `data/repository/`
@@ -360,6 +441,7 @@ import com.turingalan.pokemon.data.model.Pokemon
 import kotlinx.coroutines.flow.Flow
 
 interface PokemonRepository {
+
     suspend fun readOne(id:Long): Result<Pokemon>
     suspend fun readAll(): Result<List<Pokemon>>
     fun observe(): Flow<Result<List<Pokemon>>>
@@ -386,9 +468,18 @@ class PokemonRepositoryImpl @Inject constructor(
     @LocalDataSource private val localDataSource: PokemonDataSource,
     private val scope: CoroutineScope
 ): PokemonRepository {
+
+    override suspend fun readOne(id: Long): Result<Pokemon> {
+        return remoteDataSource.readOne(id)
+    }
+
+    override suspend fun readAll(): Result<List<Pokemon>> {
+        return remoteDataSource.readAll()
+    }
+
     override fun observe(): Flow<Result<List<Pokemon>>> {
         scope.launch {
-            refresh()
+            refresh() 
         }
         return localDataSource.observe()
     }
@@ -399,7 +490,6 @@ class PokemonRepositoryImpl @Inject constructor(
             localDataSource.addAll(resultRemotePokemon.getOrNull()!!)
         }
     }
-    //...
 }
 ```
 
@@ -426,6 +516,11 @@ Módulo de Hilt que usa `@Binds` para enlazar implementaciones a sus interfaces 
 ```kotlin
 package com.turingalan.pokemon.di
 
+import com.turingalan.pokemon.data.PokemonDataSource
+import com.turingalan.pokemon.data.local.PokemonLocalDataSource
+import com.turingalan.pokemon.data.remote.PokemonRemoteDataSource
+import com.turingalan.pokemon.data.repository.PokemonRepository
+import com.turingalan.pokemon.data.repository.PokemonRepositoryImpl
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -436,6 +531,7 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class AppModule {
+
     @Binds
     @Singleton
     @RemoteDataSource
@@ -450,7 +546,14 @@ abstract class AppModule {
     @Singleton
     abstract  fun bindPokemonRepository(repository: PokemonRepositoryImpl): PokemonRepository
 }
-//...
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class LocalDataSource
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class RemoteDataSource
 ```
 
 #### `DatabaseModule.kt`
@@ -461,6 +564,8 @@ package com.turingalan.pokemon.di
 
 import android.content.Context
 import androidx.room.Room
+import com.turingalan.pokemon.data.local.PokemonDao
+import com.turingalan.pokemon.data.local.PokemonDatabase
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -471,14 +576,23 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 class DatabaseModule {
+
     @Provides
     @Singleton
-    fun provideDatabase(@ApplicationContext context: Context): PokemonDatabase {
-        return Room.databaseBuilder(context, PokemonDatabase::class.java, "pokemon-db").build()
+    fun provideDatabase(
+        @ApplicationContext applicationContext: Context
+    ): PokemonDatabase {
+
+        val database = Room.databaseBuilder(context = applicationContext,
+            PokemonDatabase::class.java,
+            name = "pokemon-db").build()
+        return database
     }
 
     @Provides
-    fun providePokemonDao(database: PokemonDatabase): PokemonDao {
+    fun providePokemonDao(
+        database: PokemonDatabase
+    ): PokemonDao {
         return database.getPokemonDao()
     }
 }
@@ -490,27 +604,42 @@ Módulo de Hilt que provee las dependencias de la capa remota, como el cliente d
 ```kotlin
 package com.turingalan.pokemon.di
 
+import com.turingalan.pokemon.data.remote.PokemonApi
+import com.turingalan.pokemon.data.PokemonDataSource
+import com.turingalan.pokemon.data.remote.PokemonRemoteDataSource
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import javax.inject.Singleton
 
+
 @Module
 @InstallIn(SingletonComponent::class)
 class RemoteModule {
+
     @Provides
     @Singleton
-    fun providePokemonApi(): PokemonApi {
-        return Retrofit.Builder()
+    fun providePokemonApi(): PokemonApi{
+        val retrofit = Retrofit.Builder()
             .baseUrl("https://pokeapi.co")
             .addConverterFactory(GsonConverterFactory.create())
             .build()
-            .create(PokemonApi::class.java)
+
+        return retrofit.create(PokemonApi::class.java)
     }
-    //...
+
+    @Provides
+
+    fun provideCoroutineScope(): CoroutineScope {
+        return CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    }
+
 }
 ```
 
@@ -518,112 +647,40 @@ class RemoteModule {
 
 ### 2.4. Capa de UI (`/ui`)
 
-#### `ui/list/`
-Componentes de la pantalla que muestra la lista de Pokémon.
+#### `ui/common/`
 
-##### `PokemonListViewModel.kt`
-Gestiona el estado y la lógica de la pantalla de lista. Obtiene los datos del repositorio, los convierte a un `UiState` y los expone a la `Composable` a través de un `StateFlow`.
-
-```kotlin
-package com.turingalan.pokemon.ui.list
-
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
-import javax.inject.Inject
-
-@HiltViewModel
-class PokemonListViewModel @Inject constructor(
-    private val repository: PokemonRepository
-): ViewModel() {
-    private val _uiState: MutableStateFlow<ListUiState> = MutableStateFlow(ListUiState.Loading)
-    val uiState: StateFlow<ListUiState> get() = _uiState.asStateFlow()
-
-    init {
-        viewModelScope.launch {
-            repository.observe().collect { result ->
-                if (result.isSuccess) {
-                    _uiState.value = ListUiState.Success(result.getOrNull()!!.asListUiState())
-                } else {
-                    _uiState.value = ListUiState.Error
-                }
-            }
-        }
-    }
-}
-
-sealed class ListUiState { /* ... */ }
-data class ListItemUiState( /* ... */ )
-// ...
-```
-
-##### `PokemonListScreen.kt`
-La función `Composable` que renderiza la pantalla de lista. Es "tonta": solo observa el `uiState` del ViewModel y pinta lo que este le dice (una pantalla de carga, un error o la lista).
+##### `AppTopBar.kt`
+Define la barra superior de la aplicación.
 
 ```kotlin
-package com.turingalan.pokemon.ui.list
+package com.turingalan.pokemon.ui.common
 
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.navigation.NavBackStackEntry
+import com.turingalan.pokemon.R
+import com.turingalan.pokemon.ui.detail.PokemonDetailViewModel
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PokemonListScreen(
-    modifier: Modifier = Modifier,
-    viewModel: PokemonListViewModel = hiltViewModel(),
-    onShowDetail:(Long)->Unit,
+fun AppTopBar(
+    backStackEntry: NavBackStackEntry? = null,
 ) {
-    val uiState by viewModel.uiState.collectAsState()
-    when(uiState) {
-        is ListUiState.Loading -> { PokemonLoadingScreen(modifier) }
-        is ListUiState.Success -> { PokemonList(modifier, uiState, onShowDetail) }
-        is ListUiState.Error -> { PokemonError() }
-        // ...
-    }
+    TopAppBar(
+        title = {
+            Text(text=stringResource(R.string.app_name))
+        }
+    )
+
 }
 ```
 
 #### `ui/detail/`
 Componentes de la pantalla de detalle de un Pokémon.
-
-##### `PokemonDetailViewModel.kt`
-Similar al de la lista, pero para la pantalla de detalle. Usa `SavedStateHandle` para obtener el `id` del Pokémon de los argumentos de navegación y pide al repositorio los datos de ese Pokémon en concreto.
-
-```kotlin
-package com.turingalan.pokemon.ui.detail
-
-import androidx.lifecycle.SavedStateHandle
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
-import androidx.navigation.toRoute
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.launch
-import javax.inject.Inject
-
-@HiltViewModel
-class PokemonDetailViewModel @Inject constructor(
-    savedStateHandle: SavedStateHandle,
-    private val pokemonRepository: PokemonRepository
-): ViewModel() {
-    private val _uiState = MutableStateFlow(DetailUiState())
-    val uiState = _uiState.asStateFlow()
-
-    init {
-        viewModelScope.launch {
-            val route = savedStateHandle.toRoute<Route.Detail>()
-            val pokemonResult = pokemonRepository.readOne(route.id)
-            pokemonResult.getOrNull()?.let {
-                _uiState.value = it.toDetailUiState()
-            }
-        }
-    }
-}
-```
 
 ##### `PokemonDetailScreen.kt`
 La `Composable` para la pantalla de detalle. Muestra la imagen (artwork) y el nombre del Pokémon que recibe del `DetailUiState`.
@@ -631,12 +688,23 @@ La `Composable` para la pantalla de detalle. Muestra la imagen (artwork) y el no
 ```kotlin
 package com.turingalan.pokemon.ui.detail
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import com.turingalan.pokemon.R
+
 
 @Composable
 fun PokemonDetailScreen(
@@ -652,11 +720,301 @@ fun PokemonDetailScreen(
 }
 
 @Composable
-fun PokemonDetailScreen(name: String, artwork: String?) {
-    Column {
-        if (artwork != null) {
-            AsyncImage(model = artwork, contentDescription = name)
+fun PokemonDetailScreen(
+    modifier: Modifier = Modifier,
+    name: String,
+    artwork: String?,
+    )
+{
+
+    Column(modifier = modifier.fillMaxSize(),
+
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        if (artwork != null)  {
+            AsyncImage(contentDescription = name,
+                model = artwork)
         }
+    }
+
+}
+```
+
+##### `PokemonDetailViewModel.kt`
+Similar al de la lista, pero para la pantalla de detalle. Usa `SavedStateHandle` para obtener el `id` del Pokémon de los argumentos de navegación y pide al repositorio los datos de ese Pokémon en concreto.
+
+```kotlin
+package com.turingalan.pokemon.ui.detail
+
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import androidx.navigation.toRoute
+import com.turingalan.pokemon.data.model.Pokemon
+import com.turingalan.pokemon.data.repository.PokemonRepository
+import com.turingalan.pokemon.ui.navigation.Route
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+data class DetailUiState(
+    val name:String = "",
+    val artwork:String? = ""
+)
+
+@HiltViewModel
+class PokemonDetailViewModel @Inject constructor(
+    savedStateHandle: SavedStateHandle, 
+    private val pokemonRepository: PokemonRepository
+
+): ViewModel() {
+    private val _uiState: MutableStateFlow<DetailUiState> =
+        MutableStateFlow(DetailUiState())
+    val uiState: StateFlow<DetailUiState>
+        get() = _uiState.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            val route = savedStateHandle.toRoute<Route.Detail>()
+            val pokemonId = route.id
+            val pokemonResult = pokemonRepository.readOne(pokemonId)
+
+            val pokemon = pokemonResult.getOrNull()
+            pokemon?.let {
+                _uiState.value = it.toDetailUiState()
+            }
+        }
+    }
+}
+
+fun Pokemon.toDetailUiState(): DetailUiState = DetailUiState(
+    name = this.name,
+    artwork = this.artwork,
+)
+```
+
+#### `ui/list/`
+Componentes de la pantalla que muestra la lista de Pokémon.
+
+##### `PokemonListViewModel.kt`
+Gestiona el estado y la lógica de la pantalla de lista. Obtiene los datos del repositorio, los convierte a un `UiState` y los expone a la `Composable` a través de un `StateFlow`.
+
+```kotlin
+package com.turingalan.pokemon.ui.list
+
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.turingalan.pokemon.data.model.Pokemon
+import com.turingalan.pokemon.data.repository.PokemonRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+@HiltViewModel
+class PokemonListViewModel @Inject constructor(
+    private val savedStateHandle: SavedStateHandle, 
+    private val repository: PokemonRepository 
+): ViewModel() {
+
+    private val _uiState: MutableStateFlow<ListUiState> =
+        MutableStateFlow(value = ListUiState.Initial)
+    val uiState: StateFlow<ListUiState>
+        get() = _uiState.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            _uiState.value = ListUiState.Loading 
+
+            repository.observe().collect { result ->
+                if (result.isSuccess) {
+                    val pokemons = result.getOrNull()!!
+                    val uiPokemons = pokemons.asListUiState()
+                    _uiState.value = ListUiState.Success(uiPokemons)
+                } else {
+                    _uiState.value = ListUiState.Error
+                }
+            }
+        }
+    }
+}
+
+sealed class ListUiState {
+    object Initial: ListUiState()
+    object Loading: ListUiState()
+    object Error: ListUiState()
+    data class Success(
+        val pokemons: List<ListItemUiState>
+    ): ListUiState()
+}
+
+data class ListItemUiState(
+    val id: Long,
+    val name: String,
+    val sprite: String,
+)
+
+fun Pokemon.asListItemUiState(): ListItemUiState {
+    return ListItemUiState(
+        id = this.id,
+        name = this.name.replaceFirstChar { it.uppercase() }, 
+        sprite = this.sprite
+    )
+}
+
+fun List<Pokemon>.asListUiState(): List<ListItemUiState> = this.map(Pokemon::asListItemUiState)
+```
+
+##### `PokemonListScreen.kt`
+La función `Composable` que renderiza la pantalla de lista. Es "tonta": solo observa el `uiState` del ViewModel y pinta lo que este le dice (una pantalla de carga, un error o la lista).
+
+```kotlin
+package com.turingalan.pokemon.ui.list
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.LoadingIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.dp
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import coil3.compose.AsyncImage
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+fun PokemonListScreen(
+    modifier: Modifier = Modifier,
+    viewModel: PokemonListViewModel = hiltViewModel(),
+    onShowDetail:(Long)->Unit,
+) {
+    val uiState by viewModel.uiState.collectAsState()
+    when(uiState) {
+        is ListUiState.Initial -> {
+
+        }
+        is ListUiState.Loading -> {
+            PokemonLoadingScreen(modifier)
+        }
+        is ListUiState.Success -> {
+            PokemonList(modifier, uiState, onShowDetail)
+        }
+        is ListUiState.Error -> {
+            PokemonError()
+        }
+    }
+}
+
+@Composable
+private fun PokemonError(
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("Se ha producido un error", style = MaterialTheme.typography.titleLarge)
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+private fun PokemonLoadingScreen(modifier: Modifier) {
+    Column(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        LoadingIndicator(
+            modifier = Modifier.size(128.dp)
+        )
+    }
+}
+
+@Composable
+private fun PokemonList(
+    modifier: Modifier,
+    uiState: ListUiState,
+    onShowDetail: (Long) -> Unit
+) {
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+
+    ) {
+        items(
+            items = (uiState as ListUiState.Success).pokemons,
+            key = { item ->
+                item.id
+            }
+        )
+        {
+            PokemonListItemCard(
+                pokemonId = it.id,
+                name = it.name,
+                sprite = it.sprite,
+                onShowDetail = onShowDetail
+            )
+        }
+    }
+}
+
+@Composable
+fun PokemonListItemCard(
+    modifier: Modifier = Modifier,
+    pokemonId: Long,
+    name: String,
+    sprite: String,
+    onShowDetail: (Long) -> Unit,
+)
+{
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(128.dp)
+            .clickable(
+                enabled = true,
+                onClick = {
+                    onShowDetail(pokemonId)
+                })
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceAround
+        ) {
+            AsyncImage(
+                modifier = Modifier.size(64.dp),
+                model = sprite,
+                contentDescription = name,
+                contentScale = ContentScale.Fit
+            )
+            Text(text= name,
+                style = MaterialTheme.typography.headlineSmall)
+        }
+
     }
 }
 ```
@@ -670,8 +1028,12 @@ Define todas las rutas de la aplicación como una `sealed class` serializable. E
 ```kotlin
 package com.turingalan.pokemon.ui.navigation
 
+import androidx.compose.ui.Modifier
 import androidx.navigation.NavController
 import androidx.navigation.NavGraphBuilder
+import androidx.navigation.compose.composable
+import com.turingalan.pokemon.ui.detail.PokemonDetailScreen
+import com.turingalan.pokemon.ui.list.PokemonListScreen
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -685,7 +1047,37 @@ sealed class Route(val route:String) {
 fun NavController.navigateToPokemonDetails(id:Long) {
     this.navigate(Route.Detail(id))
 }
-//...
+
+fun NavGraphBuilder.pokemonDetailDestination(
+    modifier:Modifier = Modifier,
+) {
+    composable<Route.Detail> {
+
+
+            backStackEntry ->
+        PokemonDetailScreen(
+            modifier = modifier,
+        )
+
+
+    }
+}
+
+fun NavGraphBuilder.pokemonListDestination(
+    modifier:Modifier = Modifier,
+    onNavigateToDetails:(Long)->Unit
+) {
+    composable<Route.List> {
+
+        PokemonListScreen(modifier = modifier,
+            onShowDetail = {
+                    id ->
+                onNavigateToDetails(id)
+            })
+
+
+    }
+}
 ```
 
 ##### `NavGraph.kt`
@@ -694,26 +1086,56 @@ El `Composable` principal que configura el `NavHost`. Define qué pantalla (`Com
 ```kotlin
 package com.turingalan.pokemon.ui.navigation
 
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.navigation.NavController
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.turingalan.pokemon.ui.navigation.Route
+import com.turingalan.pokemon.ui.common.AppTopBar
+import com.turingalan.pokemon.ui.detail.PokemonDetailScreen
+import com.turingalan.pokemon.ui.list.PokemonListScreen
 
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NavGraph() {
     val navController = rememberNavController()
-    //...
-    Scaffold {
-        NavHost(
-            navController = navController,
-            startDestination = Route.List
-        ) {
-            pokemonListDestination(
-                onNavigateToDetails = { id ->
-                    navController.navigateToPokemonDetails(id)
-                }
-            )
-            pokemonDetailDestination()
+    val startDestination = Route.List
+    val backStackEntry by navController.currentBackStackEntryAsState()
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            AppTopBar(backStackEntry)
         }
+    )
+    {
+        innerPadding ->
+
+            val contentModifier = Modifier.consumeWindowInsets(innerPadding).padding(innerPadding)
+            NavHost(
+                navController = navController,
+                startDestination = startDestination
+            )
+            {
+
+                pokemonListDestination(contentModifier,
+                    onNavigateToDetails = {
+                        navController.navigateToPokemonDetails(it)
+                        }
+                    )
+                pokemonDetailDestination(contentModifier)
+            }
     }
 }
 ```
@@ -721,18 +1143,91 @@ fun NavGraph() {
 #### `ui/theme/`
 Archivos estándar para definir el tema de la aplicación (colores, tipografía).
 
-##### `Color.kt`, `Type.kt`, `Theme.kt`
-Definen las paletas de colores para los modos claro y oscuro, los estilos de tipografía (`Typography`) y el `Composable` `PokemonTheme` que aplica todo el estilo a la aplicación.
+##### `Color.kt`
+Define las paletas de colores para los modos claro y oscuro.
 
 ```kotlin
-// Theme.kt
+package com.turingalan.pokemon.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+val Purple80 = Color(0xFFD0BCFF)
+val PurpleGrey80 = Color(0xFFCCC2DC)
+val Pink80 = Color(0xFFEFB8C8)
+
+val Purple40 = Color(0xFF6650a4)
+val PurpleGrey40 = Color(0xFF625b71)
+val Pink40 = Color(0xFF7D5260)
+```
+
+##### `Type.kt`
+Define los estilos de tipografía (`Typography`) usados en la aplicación.
+
+```kotlin
+package com.turingalan.pokemon.ui.theme
+
+import androidx.compose.material3.Typography
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+
+val Typography = Typography(
+    bodyLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Normal,
+        fontSize = 16.sp,
+        lineHeight = 24.sp,
+        letterSpacing = 0.5.sp
+    )
+)
+```
+
+##### `Theme.kt`
+El `Composable` `PokemonTheme` que aplica todo el estilo (colores y tipografía) a la aplicación, manejando los modos claro/oscuro y el color dinámico de Android 12+.
+
+```kotlin
+package com.turingalan.pokemon.ui.theme
+
+import android.app.Activity
+import android.os.Build
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
+
+private val DarkColorScheme = darkColorScheme(
+    primary = Purple80,
+    secondary = PurpleGrey80,
+    tertiary = Pink80
+)
+
+private val LightColorScheme = lightColorScheme(
+    primary = Purple40,
+    secondary = PurpleGrey40,
+    tertiary = Pink40
+)
+
 @Composable
 fun PokemonTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = /* ... */
+    val colorScheme = when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            val context = LocalContext.current
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        }
+
+        darkTheme -> DarkColorScheme
+        else -> LightColorScheme
+    }
+
     MaterialTheme(
         colorScheme = colorScheme,
         typography = Typography,

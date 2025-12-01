@@ -2,6 +2,19 @@
 
 Este documento describe la estructura de archivos y directorios del proyecto, explicando el propósito de cada componente principal con los códigos completos.
 
+## Índice
+
+1.  [Esquema General de la Estructura](#1-esquema-general-de-la-estructura)
+2.  [Análisis Detallado del Código Fuente](#2-análisis-detallado-del-código-fuente)
+    *   [2.1. Raíz (`/pokemon`)](#21-raíz-pokemon)
+    *   [2.2. Capa de Datos (`/data`)](#22-capa-de-datos-data)
+    *   [2.3. Inyección de Dependencias (`/di`)](#23-inyección-de-dependencias-di)
+    *   [2.4. Capa de UI (`/ui`)](#24-capa-de-ui-ui)
+3.  [Archivos de Build (Gradle)](#3-archivos-de-build-gradle)
+    *   [3.1. `build.gradle.kts` (Proyecto)](#31-buildgradlekts-proyecto)
+    *   [3.2. `app/build.gradle.kts` (Módulo `app`)](#32-appbuildgradlekts-módulo-app)
+
+
 ## 1. Esquema General de la Estructura
 
 ```
@@ -1233,5 +1246,123 @@ fun PokemonTheme(
         typography = Typography,
         content = content
     )
+}
+```
+
+---
+
+## 3. Archivos de Build (Gradle)
+
+### 3.1. `build.gradle.kts` (Proyecto)
+Este archivo, ubicado en la raíz del proyecto, configura los plugins de Gradle que se aplicarán a todos los módulos.
+
+```kotlin
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.kotlin.android) apply false
+    alias(libs.plugins.kotlin.compose) apply false
+    alias(libs.plugins.hilt)  apply false
+    alias(libs.plugins.ksp)  apply false
+    alias(libs.plugins.serialize) apply false
+}
+```
+
+### 3.2. `app/build.gradle.kts` (Módulo `app`)
+Este archivo gestiona la configuración específica del módulo de la aplicación, incluyendo la aplicación de plugins, la configuración de Android y la declaración de dependencias.
+
+```kotlin
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.hilt)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.serialize)
+}
+
+android {
+    namespace = "com.turingalan.pokemon"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "com.turingalan.pokemon"
+        minSdk = 34
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+
+    buildFeatures {
+        compose = true
+    }
+    kotlinOptions {
+        freeCompilerArgs = listOf("-XXLanguage:+PropertyParamAnnotationDefaultTargetMode")
+    }
+}
+
+// Añadimos esta configuración para KSP
+ksp {
+    arg("room.generateKotlin", "true")
+}
+
+dependencies {
+    //Coil
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
+
+    //Retrofit
+    implementation(libs.retrofit)
+    implementation(libs.converter.gson)
+
+    //Room
+    implementation(libs.androidx.room.runtime)
+    ksp(libs.androidx.room.compiler)
+    implementation(libs.androidx.room.ktx)
+
+    //Hilt
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+    implementation(libs.androidx.hilt.navigation.compose)
+
+    // View Model
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+
+    // Navigation
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.kotlinx.serialization.json)
+
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.activity.compose)
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.ui)
+    implementation(libs.androidx.ui.graphics)
+    implementation(libs.androidx.ui.tooling.preview)
+    implementation(libs.androidx.material3)
+    testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.ui.test.junit4)
+    debugImplementation(libs.androidx.ui.tooling)
+    debugImplementation(libs.androidx.ui.test.manifest)
+    implementation(libs.kotlinx.coroutines.core)
 }
 ```

@@ -281,7 +281,7 @@ class PokemonNotFoundException : RuntimeException() {
 Contiene todo lo relacionado con la API remota (Retrofit y Gson).
 
 ##### `PokemonApi.kt`
-Interfaz de Retrofit que define los _endpoints_ de la API. Las anotaciones `@GET`, `@Query` y `@Path` configuran las peticiones HTTP.
+Interfaz de Retrofit que define los _endpoints_ de la API. Las anotaciones `@GET`, `@Query` y `@Path` configuran las peticiones HTTP. <br> **IMPORTANTE LOS SUSPEND**
 
 ```kotlin
 package com.turingalan.pokemon.data.remote

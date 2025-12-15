@@ -295,6 +295,7 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 interface PokemonApi {
+    //IMPORTANTE ACORDARSE DE LOS SUSPEND NO DA ERROR PERO NO SE VERA EN LA APLICACION NADA
     @GET("/api/v2/pokemon/")
     suspend fun readAll(@Query("limit") limit:Int=60, @Query("offset") offset:Int=0): Response<PokemonListRemote>
 
